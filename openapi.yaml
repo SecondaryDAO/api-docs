@@ -691,11 +691,31 @@ paths:
                 walletAddress:
                   type: string
                   description: Restrict key to a specific wallet (null = all wallets)
-                allowedIPs:
-                  type: array
-                  items:
-                    type: string
-                  description: IP whitelist (empty = allow all)
+                ipRestrictions:
+                  type: object
+                  description: IP-based access restrictions (OR logic between groups)
+                  properties:
+                    customIPs:
+                      type: array
+                      items:
+                        type: string
+                      description: Custom IP addresses or CIDR ranges
+                      example: ["203.0.113.50", "10.0.0.0/8"]
+                    allowedCountries:
+                      type: array
+                      items:
+                        type: string
+                      description: ISO 3166-1 alpha-2 country codes
+                      example: ["US", "CA"]
+                    allowedCloudProviders:
+                      type: array
+                      items:
+                        type: string
+                        enum: [aws, gcp, azure, cloudflare]
+                      description: Cloud provider IP ranges to allow
+                    enabled:
+                      type: boolean
+                      default: true
                 expiresIn:
                   type: integer
                   description: Hours until expiration (1-8760)
@@ -718,7 +738,7 @@ paths:
           description: Key revoked
     patch:
       summary: Update API Key
-      description: Update label or IP whitelist
+      description: Update label or IP restrictions
       tags: [Key Management]
       parameters:
         - name: keyId
@@ -734,10 +754,24 @@ paths:
               properties:
                 label:
                   type: string
-                allowedIPs:
-                  type: array
-                  items:
-                    type: string
+                ipRestrictions:
+                  type: object
+                  properties:
+                    customIPs:
+                      type: array
+                      items:
+                        type: string
+                    allowedCountries:
+                      type: array
+                      items:
+                        type: string
+                    allowedCloudProviders:
+                      type: array
+                      items:
+                        type: string
+                        enum: [aws, gcp, azure, cloudflare]
+                    enabled:
+                      type: boolean
       responses:
         '200':
           description: Key updated

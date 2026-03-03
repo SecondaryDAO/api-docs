@@ -45,8 +45,31 @@ Log into the SecondaryDAO web application, navigate to Account Settings, and cre
 
 When you create a key, you choose:
 - **Label** - A name for this key (e.g., "My Trading Bot")
-- **Scopes** - What the key can do (see [Scopes Reference](#5-scopes-reference))
-- **IP Whitelist** (optional) - Lock the key to specific IP addresses
+- **Scopes** - What the key can do (see [Scopes Reference](#6-scopes-reference))
+- **Wallet Scope** (optional) - Restrict the key to a single wallet address
+- **IP Restrictions** (optional) - Restrict by country, cloud provider, and/or custom IP/CIDR ranges
+
+#### IP Restrictions
+
+You can lock an API key to specific IP addresses using three restriction types (OR logic -- access is allowed if the IP matches **any** enabled group):
+
+| Restriction | Description |
+|-------------|-------------|
+| **Country** | Only allow requests from specific countries (e.g., US, CA). Uses GeoIP lookup. |
+| **Cloud Provider** | Only allow requests from AWS, GCP, Azure, or Cloudflare IP ranges. |
+| **Custom IPs / CIDR** | Allow specific IP addresses or CIDR ranges (e.g., `203.0.113.50`, `10.0.0.0/8`). |
+
+Example `ipRestrictions` object when creating a key via the API:
+```json
+{
+  "ipRestrictions": {
+    "allowedCountries": ["US"],
+    "allowedCloudProviders": ["aws"],
+    "customIPs": ["203.0.113.50"],
+    "enabled": true
+  }
+}
+```
 
 You will receive:
 - **Key ID** (`keyId`) - Your public identifier, like `sd_live_a1b2c3d4e5f6`
