@@ -544,6 +544,169 @@ Purchase tokens during an Initial Property Sale using ERC-2612 permit signatures
 | `buyerAddress` | Your wallet address |
 | `signature` | ERC-2612 permit signature (v, r, s, deadline) |
 
+#### How to Sign the ERC-2612 Permit
+
+The `signature` field requires an EIP-712 typed data signature. Your bot signs this locally with its private key -- the key never leaves your machine. Here's how to construct it:
+
+**JavaScript (ethers.js v6):**
+```javascript
+const { ethers } = require('ethers');
+
+// Your bot's wallet (private key stored securely, e.g., env var)
+const provider = new ethers.JsonRpcProvider(RPC_URL);
+const wallet = new ethers.Wallet(process.env.PRIVATE_KEY, provider);
+
+// USDC contract (or USDT -- same interface)
+const USDC_ADDRESS = '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48'; // mainnet USDC
+const usdc = new ethers.Contract(USDC_ADDRESS, [
+  'function name() view returns (string)',
+  'function nonces(address) view returns (uint256)',
+], provider);
+
+// The escrow contract for this property (from GET /api/explorer/properties)
+const ESCROW_ADDRESS = '0x...PropertySaleEscrow...';
+
+// Amount: 100 USDC = 100_000_000 (6 decimals)
+const amount = '100000000';
+
+// Build the EIP-712 domain and permit
+const [tokenName, nonce, chainId] = await Promise.all([
+  usdc.name(),
+  usdc.nonces(wallet.address),
+  provider.getNetwork().then(n => n.chainId),
+]);
+
+const domain = {
+  name: tokenName,
+  version: '1',
+  chainId: chainId,
+  verifyingContract: USDC_ADDRESS,
+};
+
+const deadline = Math.floor(Date.now() / 1000) + 3600; // 1 hour from now
+
+const types = {
+  Permit: [
+    { name: 'owner', type: 'address' },
+    { name: 'spender', type: 'address' },
+    { name: 'value', type: 'uint256' },
+    { name: 'nonce', type: 'uint256' },
+    { name: 'deadline', type: 'uint256' },
+  ],
+};
+
+const value = {
+  owner: wallet.address,
+  spender: ESCROW_ADDRESS,
+  value: amount,
+  nonce: nonce,
+  deadline: deadline,
+};
+
+// Sign (private key never leaves your machine)
+const rawSignature = await wallet.signTypedData(domain, types, value);
+const { v, r, s } = ethers.Signature.from(rawSignature);
+
+// Send to the API
+const response = await fetch('https://api.secondarydao.com/api/token-purchase/gasless', {
+  method: 'POST',
+  headers: {
+    ...hmacHeaders('POST', '/api/token-purchase/gasless', body),
+    'Content-Type': 'application/json',
+  },
+  body: JSON.stringify({
+    propertyId: '64abc123...',
+    amount: amount,
+    isUSDT: false,
+    buyerAddress: wallet.address,
+    signature: { v, r, s, deadline },
+  }),
+});
+```
+
+**Python (web3.py):**
+```python
+from web3 import Web3
+from eth_account.messages import encode_typed_data
+import json, requests
+
+w3 = Web3(Web3.HTTPProvider(RPC_URL))
+account = w3.eth.account.from_key(PRIVATE_KEY)
+
+USDC_ADDRESS = '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48'
+ESCROW_ADDRESS = '0x...PropertySaleEscrow...'
+
+usdc = w3.eth.contract(address=USDC_ADDRESS, abi=[
+    {"inputs":[{"name":"owner","type":"address"}],"name":"nonces","outputs":[{"type":"uint256"}],"stateMutability":"view","type":"function"},
+    {"inputs":[],"name":"name","outputs":[{"type":"string"}],"stateMutability":"view","type":"function"},
+])
+
+amount = 100_000_000  # 100 USDC
+deadline = int(time.time()) + 3600
+nonce = usdc.functions.nonces(account.address).call()
+token_name = usdc.functions.name().call()
+chain_id = w3.eth.chain_id
+
+# EIP-712 typed data
+full_message = {
+    "types": {
+        "EIP712Domain": [
+            {"name": "name", "type": "string"},
+            {"name": "version", "type": "string"},
+            {"name": "chainId", "type": "uint256"},
+            {"name": "verifyingContract", "type": "address"},
+        ],
+        "Permit": [
+            {"name": "owner", "type": "address"},
+            {"name": "spender", "type": "address"},
+            {"name": "value", "type": "uint256"},
+            {"name": "nonce", "type": "uint256"},
+            {"name": "deadline", "type": "uint256"},
+        ],
+    },
+    "primaryType": "Permit",
+    "domain": {
+        "name": token_name,
+        "version": "1",
+        "chainId": chain_id,
+        "verifyingContract": USDC_ADDRESS,
+    },
+    "message": {
+        "owner": account.address,
+        "spender": ESCROW_ADDRESS,
+        "value": amount,
+        "nonce": nonce,
+        "deadline": deadline,
+    },
+}
+
+signed = account.sign_typed_data(full_message=full_message)
+
+response = requests.post(
+    f'{BASE_URL}/api/token-purchase/gasless',
+    json={
+        'propertyId': '64abc123...',
+        'amount': str(amount),
+        'isUSDT': False,
+        'buyerAddress': account.address,
+        'signature': {
+            'v': signed.v,
+            'r': hex(signed.r),
+            's': hex(signed.s),
+            'deadline': deadline,
+        },
+    },
+    headers=hmac_headers('POST', '/api/token-purchase/gasless', body),
+)
+```
+
+**Key points:**
+- The `spender` in the permit is the PropertySaleEscrow contract address, not SecondaryDAO
+- Fetch the escrow address from `GET /api/explorer/properties` -- don't hardcode it
+- USDC uses 6 decimal places: 1 USDC = `1000000`, 100 USDC = `100000000`
+- The `nonce` comes from `usdc.nonces(yourAddress)` -- it auto-increments after each permit
+- Set `deadline` to a reasonable future time (1 hour is typical)
+
 **Note:** Limited to 10 gasless purchases per day per wallet.
 
 ---
@@ -636,7 +799,13 @@ POST /api/api-keys
 {
   "label": "My Trading Bot",
   "scopes": ["portfolio:read", "orders:read", "orders:write"],
-  "allowedIPs": ["203.0.113.50"],
+  "walletAddress": "0xYourWallet",
+  "ipRestrictions": {
+    "allowedCountries": ["US"],
+    "allowedCloudProviders": ["aws"],
+    "customIPs": ["203.0.113.50"],
+    "enabled": true
+  },
   "expiresIn": 8760
 }
 ```
@@ -650,7 +819,13 @@ POST /api/api-keys
   "secret": "a1b2c3d4e5f6...96 chars total...",
   "label": "My Trading Bot",
   "scopes": ["portfolio:read", "orders:read", "orders:write"],
-  "allowedIPs": ["203.0.113.50"],
+  "walletAddress": "0xYourWallet",
+  "ipRestrictions": {
+    "allowedCountries": ["US"],
+    "allowedCloudProviders": ["aws"],
+    "customIPs": ["203.0.113.50"],
+    "enabled": true
+  },
   "expiresAt": "2027-03-03T00:00:00.000Z",
   "createdAt": "2026-03-03T00:00:00.000Z"
 }
@@ -678,12 +853,16 @@ Revokes the key immediately. Any in-flight requests with this key will fail.
 PATCH /api/api-keys/:keyId
 ```
 
-Update label or IP whitelist. Scopes cannot be changed after creation.
+Update label or IP restrictions. Scopes cannot be changed after creation.
 
 ```json
 {
   "label": "Updated Label",
-  "allowedIPs": ["203.0.113.50", "198.51.100.0/24"]
+  "ipRestrictions": {
+    "customIPs": ["203.0.113.50", "198.51.100.0/24"],
+    "allowedCountries": ["US", "CA"],
+    "enabled": true
+  }
 }
 ```
 
