@@ -456,6 +456,8 @@ Purchase tokens during an Initial Property Sale using ERC-2612 permit signatures
 
 **Required scope:** `distributions:read`
 
+Rent distributions are currently **auto-pushed** to all token holders on-chain via the TrustlessDistributionManager. No action is required from your bot -- earnings arrive directly in your wallet. Use these endpoints to track distribution history and accrued amounts.
+
 #### Get Unclaimed Earnings
 
 ```
@@ -477,39 +479,17 @@ GET /api/distributions/unclaimed/:walletAddress
 }
 ```
 
-#### Get Claim Data (Merkle Proofs)
-
-```
-GET /api/distributions/claim-data/:walletAddress
-```
-
-Returns merkle proofs needed to claim distributions on-chain.
-
 #### Get Claim History
 
 ```
 GET /api/distributions/history/:walletAddress
 ```
 
-Returns past distribution claims.
+Returns past distribution payments received by the wallet.
 
-#### Record a Claim
+#### Future: Gasless Claims
 
-```
-POST /api/distributions/record-claim
-```
-
-Call this after a successful on-chain claim transaction to record it in the system.
-
-**Request body:**
-```json
-{
-  "walletAddress": "0xYourWallet",
-  "epoch": 5,
-  "txHash": "0x...",
-  "amount": "150500000"
-}
-```
+A gas-efficient claim-based distribution system (MerklePayoutDistributor) is built but not yet active. When enabled, it will allow bots to claim accrued earnings via EIP-712 signed gasless claims through the API. The endpoints (`/api/distributions/claim-data`, `/api/distributions/gasless-claim`, `/api/distributions/record-claim`) will be documented here once activated.
 
 ---
 
@@ -1045,8 +1025,6 @@ X-SD-TIMESTAMP: <unix_milliseconds>
 - `POST /api/order-book/create` - `orders:write`
 - `POST /api/token-purchase/gasless` - `trading:execute`
 - `GET /api/distributions/unclaimed/:walletAddress` - `distributions:read`
-- `GET /api/distributions/claim-data/:walletAddress` - `distributions:read`
-- `POST /api/distributions/record-claim` - `distributions:read`
 - `GET /api/distributions/history/:walletAddress` - `distributions:read`
 - `GET /api/buyout/check-approval/:propertyId` - `buyout:read`
 - `GET /api/buyout/offer-requirements/:propertyId` - `buyout:read`

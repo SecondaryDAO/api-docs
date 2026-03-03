@@ -575,21 +575,6 @@ paths:
               schema:
                 $ref: '#/components/schemas/UnclaimedDistributions'
 
-  /api/distributions/claim-data/{walletAddress}:
-    get:
-      summary: Claim Proofs
-      description: Get merkle proofs for claiming distributions on-chain
-      tags: [Distributions]
-      parameters:
-        - name: walletAddress
-          in: path
-          required: true
-          schema:
-            type: string
-      responses:
-        '200':
-          description: Claim data with merkle proofs
-
   /api/distributions/history/{walletAddress}:
     get:
       summary: Claim History
