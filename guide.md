@@ -11,20 +11,21 @@ This document covers everything a trader needs to build applications that intera
 
 1. [Getting an API Key](#1-getting-an-api-key)
 2. [Authentication](#2-authentication)
-3. [Rate Limits](#3-rate-limits)
-4. [API Endpoints](#4-api-endpoints)
-   - [Market Data (Public)](#41-market-data-public--no-auth-needed)
-   - [Portfolio](#42-portfolio)
-   - [Orders](#43-orders)
-   - [Trading](#44-trading)
-   - [Distributions](#45-distributions)
-   - [Buyouts](#46-buyouts)
-   - [API Key Management](#47-api-key-management)
-5. [Scopes Reference](#5-scopes-reference)
-6. [Error Codes](#6-error-codes)
-7. [Code Examples](#7-code-examples)
-8. [Security Best Practices](#8-security-best-practices)
-9. [Websocket Events](#9-websocket-events)
+3. [How Trading Works](#3-how-trading-works)
+4. [Rate Limits](#4-rate-limits)
+5. [API Endpoints](#5-api-endpoints)
+   - [Market Data (Public)](#51-market-data-public--no-auth-needed)
+   - [Portfolio](#52-portfolio)
+   - [Orders](#53-orders)
+   - [Trading](#54-trading)
+   - [Distributions](#55-distributions)
+   - [Buyouts](#56-buyouts)
+   - [API Key Management](#57-api-key-management)
+6. [Scopes Reference](#6-scopes-reference)
+7. [Error Codes](#7-error-codes)
+8. [Code Examples](#8-code-examples)
+9. [Security Best Practices](#9-security-best-practices)
+10. [Websocket Events](#10-websocket-events)
 
 ---
 
@@ -119,7 +120,79 @@ Sending the raw secret via `X-SD-SECRET` header is still supported but **depreca
 
 ---
 
-## 3. Rate Limits
+## 3. How Trading Works
+
+### Architecture: Off-Chain Matching, On-Chain Settlement
+
+SecondaryDAO uses a **hybrid order book**. Orders are matched off-chain in a centralized matching engine (fast, no gas fees), then settled on-chain by the platform (atomic token/stablecoin swap).
+
+```
+1. Bot places order via API  -->  MongoDB (off-chain)
+2. Matching engine finds match -->  price-time priority
+3. Platform settler executes   -->  on-chain atomic swap
+4. Tokens move, USDC moves     -->  in one transaction
+```
+
+This means your bot places orders via HTTP and the platform handles all blockchain execution. You do not sign individual trades.
+
+### One-Time On-Chain Setup (Required)
+
+Before your bot can trade, the wallet must authorize the escrow contract to move tokens on its behalf. This is a standard ERC-20 approval -- the same pattern used by Uniswap, Aave, and every DeFi protocol.
+
+**For buying:** Approve USDC (or USDT) to the property's escrow contract.
+```javascript
+// ethers.js v6
+const usdc = new ethers.Contract(USDC_ADDRESS, ERC20_ABI, signer);
+await usdc.approve(ESCROW_ADDRESS, ethers.MaxUint256); // or a specific amount
+```
+
+**For selling:** Approve your property tokens to the escrow contract.
+```javascript
+const token = new ethers.Contract(PROPERTY_TOKEN_ADDRESS, ERC20_ABI, signer);
+await token.approve(ESCROW_ADDRESS, ethers.MaxUint256);
+```
+
+These are one-time transactions per token per escrow contract. After approval, all subsequent trades settle automatically when orders match -- no further wallet interaction needed.
+
+**To find contract addresses:** Use `GET /api/explorer/properties` (public) which returns escrow and token contract addresses for each property.
+
+### What Your Bot Does vs. What the Platform Does
+
+| Step | Who | How |
+|------|-----|-----|
+| Approve tokens/USDC to escrow | **Your bot** | One-time on-chain tx (ethers.js, web3.js, etc.) |
+| Place buy/sell orders | **Your bot** | `POST /api/order-book/create` (HMAC-signed HTTP) |
+| Match orders | **Platform** | Automatic, off-chain, price-time priority |
+| Execute settlement on-chain | **Platform** | Settler wallet calls `settleTrade()` on escrow contract |
+| Transfer tokens + USDC | **Platform** | Atomic swap using your pre-approved allowances |
+
+### IPS Purchases (Initial Property Sale)
+
+During an Initial Property Sale, the flow is different. Your bot signs an ERC-2612 permit locally (your private key never leaves your machine), then sends the signature to the API. The platform relays the purchase transaction gaslessly.
+
+```
+1. Bot signs ERC-2612 USDC permit (locally, off-chain)
+2. Bot sends permit signature to POST /api/token-purchase/gasless
+3. Platform relays the purchase on-chain (platform pays gas)
+```
+
+See [Section 5.4 Trading](#54-trading) for the endpoint details.
+
+### Security Model
+
+**Your API key is your trading authority.** Anyone with a valid API key that has `orders:write` scope can place orders against the associated wallet. This is the same security model as Binance, Coinbase Pro, and every exchange API -- the key authorizes trading, and on-chain approvals authorize token movement.
+
+Protect your keys accordingly:
+- **Restrict wallet scope** -- lock each key to one specific wallet, not "all wallets"
+- **Whitelist IPs** -- if your bot runs on a fixed server, only allow that IP
+- **Minimize scopes** -- a read-only dashboard key should never have `orders:write`
+- **Set expiration** -- use time-limited keys for development and testing
+
+See [Section 9: Security Best Practices](#9-security-best-practices) for the full list.
+
+---
+
+## 4. Rate Limits
 
 | Category | Limit | Window |
 |----------|-------|--------|
@@ -136,9 +209,9 @@ When you hit a rate limit, you'll receive a `429 Too Many Requests` response.
 
 ---
 
-## 4. API Endpoints
+## 5. API Endpoints
 
-### 4.1 Market Data (Public -- No Auth Needed)
+### 5.1 Market Data (Public -- No Auth Needed)
 
 These endpoints are publicly accessible. No API key required, but you can use one.
 
@@ -249,7 +322,7 @@ Returns active buyout offers for a property.
 
 ---
 
-### 4.2 Portfolio
+### 5.2 Portfolio
 
 **Required scope:** `portfolio:read`
 
@@ -319,7 +392,7 @@ Returns rental income breakdown.
 
 ---
 
-### 4.3 Orders
+### 5.3 Orders
 
 #### List Orders
 
@@ -411,7 +484,7 @@ POST /api/order-book/create
 
 ---
 
-### 4.4 Trading
+### 5.4 Trading
 
 #### Gasless Token Purchase (IPS)
 
@@ -452,7 +525,7 @@ Purchase tokens during an Initial Property Sale using ERC-2612 permit signatures
 
 ---
 
-### 4.5 Distributions
+### 5.5 Distributions
 
 **Required scope:** `distributions:read`
 
@@ -493,7 +566,7 @@ A gas-efficient claim-based distribution system (MerklePayoutDistributor) is bui
 
 ---
 
-### 4.6 Buyouts
+### 5.6 Buyouts
 
 **Required scope:** `buyout:read`
 
@@ -523,7 +596,7 @@ Returns the authenticated user's token balance and ownership percentage for a pr
 
 ---
 
-### 4.7 API Key Management
+### 5.7 API Key Management
 
 **Requires JWT authentication (web login), not API key.**
 
@@ -593,7 +666,7 @@ Update label or IP whitelist. Scopes cannot be changed after creation.
 
 ---
 
-## 5. Scopes Reference
+## 6. Scopes Reference
 
 | Scope | Access |
 |-------|--------|
@@ -616,7 +689,7 @@ Update label or IP whitelist. Scopes cannot be changed after creation.
 
 ---
 
-## 6. Error Codes
+## 7. Error Codes
 
 ### HTTP Status Codes
 
@@ -646,7 +719,7 @@ Update label or IP whitelist. Scopes cannot be changed after creation.
 
 ---
 
-## 7. Code Examples
+## 8. Code Examples
 
 ### Python
 
@@ -927,33 +1000,52 @@ const client = new SecondaryDAOClient(
 
 ---
 
-## 8. Security Best Practices
+## 9. Security Best Practices
+
+### API Key Security
+
+Your API key is your trading authority. Anyone with a valid `orders:write` key can place trades against the associated wallet. Treat keys like exchange API credentials.
 
 1. **Use HMAC signing.** Always use `X-SD-SIGNATURE` (HMAC) instead of `X-SD-SECRET` (legacy). HMAC ensures your secret never leaves your machine and protects against request body tampering.
 
-2. **Never share your API secret.** Treat it like a password. If compromised, revoke the key immediately.
+2. **Never share your API secret.** Treat it like a private key. If compromised, revoke immediately.
 
-3. **Use IP whitelisting.** If your bot runs from a fixed server, whitelist that IP address when creating the key.
+3. **Restrict wallet scope.** When creating a key, lock it to one specific wallet address instead of "all wallets." This limits the blast radius if a key is compromised.
 
-4. **Use minimum required scopes.** A portfolio tracker only needs `portfolio:read`. A trading bot needs `orders:read` + `orders:write`. Don't grant `trading:execute` unless you need gasless purchases.
+4. **Use IP whitelisting.** If your bot runs from a fixed server, whitelist that IP address. A stolen key is useless if the attacker can't reach the API from the whitelisted IP.
 
-5. **Set key expiration.** Consider setting `expiresIn` when creating keys, especially for development/testing keys.
+5. **Use minimum required scopes.** A portfolio tracker only needs `portfolio:read`. A trading bot needs `orders:read` + `orders:write`. Don't grant `trading:execute` unless you need gasless IPS purchases.
 
-6. **Store secrets in environment variables.** Never hardcode secrets in source code.
+6. **Set key expiration.** Use `expiresIn` for development/testing keys. For production bots, rotate keys on a regular schedule.
 
-7. **Monitor usage.** Use `GET /api/api-keys` to check `lastUsedAt` and `totalRequests` for each key.
+7. **Store secrets in environment variables.** Never hardcode secrets in source code or commit them to version control.
 
-8. **Rotate keys periodically.** Create a new key, update your bot, then revoke the old key.
+8. **Monitor usage.** Use `GET /api/api-keys` to check `lastUsedAt` and `totalRequests` for each key. Unexpected activity means a compromised key.
 
-9. **Auto-revocation triggers.** Your API keys will be automatically revoked if:
-   - You change your password
-   - Your AML status changes to 'failed'
-   - Your account is suspended
-   - An admin revokes your access
+9. **Rotate keys periodically.** Create a new key, update your bot, then revoke the old key.
+
+### On-Chain Approval Safety
+
+10. **Approve specific amounts, not unlimited.** Instead of `ethers.MaxUint256`, approve only the amount you plan to trade. This limits exposure if the escrow contract is ever compromised.
+
+11. **Revoke approvals when done.** If you stop trading a property, set the approval back to zero:
+    ```javascript
+    await usdc.approve(ESCROW_ADDRESS, 0);
+    ```
+
+12. **Verify contract addresses.** Always fetch escrow addresses from `GET /api/explorer/properties` rather than hardcoding them. Confirm they match on-chain before approving.
+
+### Auto-Revocation Triggers
+
+Your API keys will be automatically revoked if:
+- You change your password
+- Your AML status changes to 'failed'
+- Your account is suspended
+- An admin revokes your access
 
 ---
 
-## 9. Websocket Events
+## 10. Websocket Events
 
 The platform uses WebSocket connections for real-time updates. WebSocket access is available through the web application. API key users should poll the REST endpoints for updates.
 
