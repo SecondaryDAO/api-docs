@@ -551,6 +551,7 @@ The `signature` field requires an EIP-712 typed data signature. Your bot signs t
 **JavaScript (ethers.js v6):**
 ```javascript
 const { ethers } = require('ethers');
+const crypto = require('crypto');
 
 // Your bot's wallet (private key stored securely, e.g., env var)
 const provider = new ethers.JsonRpcProvider(RPC_URL);
@@ -607,20 +608,35 @@ const value = {
 const rawSignature = await wallet.signTypedData(domain, types, value);
 const { v, r, s } = ethers.Signature.from(rawSignature);
 
-// Send to the API
-const response = await fetch('https://api.secondarydao.com/api/token-purchase/gasless', {
+// Build the API request body and HMAC-sign it (body included in signature)
+const API_KEY_ID = process.env.SD_KEY_ID;
+const API_SECRET = process.env.SD_SECRET;
+const path = '/api/token-purchase/gasless';
+
+const requestBody = JSON.stringify({
+  propertyId: '64abc123...',
+  amount: amount,
+  isUSDT: false,
+  buyerAddress: wallet.address,
+  signature: { v, r, s, deadline },
+});
+
+const timestamp = String(Date.now());
+const message = timestamp + 'POST' + path + requestBody;
+const hmacSig = crypto
+  .createHmac('sha256', API_SECRET)
+  .update(message)
+  .digest('hex');
+
+const response = await fetch(`https://api.secondarydao.com${path}`, {
   method: 'POST',
   headers: {
-    ...hmacHeaders('POST', '/api/token-purchase/gasless', body),
+    'X-SD-KEY': API_KEY_ID,
+    'X-SD-SIGNATURE': hmacSig,
+    'X-SD-TIMESTAMP': timestamp,
     'Content-Type': 'application/json',
   },
-  body: JSON.stringify({
-    propertyId: '64abc123...',
-    amount: amount,
-    isUSDT: false,
-    buyerAddress: wallet.address,
-    signature: { v, r, s, deadline },
-  }),
+  body: requestBody,
 });
 ```
 
@@ -628,7 +644,7 @@ const response = await fetch('https://api.secondarydao.com/api/token-purchase/ga
 ```python
 from web3 import Web3
 from eth_account.messages import encode_typed_data
-import json, requests
+import json, requests, time, hmac, hashlib, os
 
 w3 = Web3(Web3.HTTPProvider(RPC_URL))
 account = w3.eth.account.from_key(PRIVATE_KEY)
@@ -682,21 +698,39 @@ full_message = {
 
 signed = account.sign_typed_data(full_message=full_message)
 
-response = requests.post(
-    f'{BASE_URL}/api/token-purchase/gasless',
-    json={
-        'propertyId': '64abc123...',
-        'amount': str(amount),
-        'isUSDT': False,
-        'buyerAddress': account.address,
-        'signature': {
-            'v': signed.v,
-            'r': hex(signed.r),
-            's': hex(signed.s),
-            'deadline': deadline,
-        },
+# Build the API request body and HMAC-sign it (body included in signature)
+API_KEY_ID = os.environ['SD_KEY_ID']
+API_SECRET = os.environ['SD_SECRET']
+path = '/api/token-purchase/gasless'
+
+request_body = json.dumps({
+    'propertyId': '64abc123...',
+    'amount': str(amount),
+    'isUSDT': False,
+    'buyerAddress': account.address,
+    'signature': {
+        'v': signed.v,
+        'r': hex(signed.r),
+        's': hex(signed.s),
+        'deadline': deadline,
     },
-    headers=hmac_headers('POST', '/api/token-purchase/gasless', body),
+})
+
+timestamp = str(int(time.time() * 1000))
+message = timestamp + 'POST' + path + request_body
+hmac_sig = hmac.new(
+    API_SECRET.encode(), message.encode(), hashlib.sha256
+).hexdigest()
+
+response = requests.post(
+    f'{BASE_URL}{path}',
+    data=request_body,
+    headers={
+        'X-SD-KEY': API_KEY_ID,
+        'X-SD-SIGNATURE': hmac_sig,
+        'X-SD-TIMESTAMP': timestamp,
+        'Content-Type': 'application/json',
+    },
 )
 ```
 
