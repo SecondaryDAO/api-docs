@@ -48,6 +48,11 @@ components:
       in: header
       name: X-SD-TIMESTAMP
       description: Unix timestamp in milliseconds
+    JwtAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT web session token (from browser login). Required for API key management endpoints.
 
   schemas:
     Property:
@@ -318,6 +323,32 @@ paths:
         '200':
           description: Token supply stats
 
+  /api/token-stats/total-balance:
+    get:
+      summary: Total Token Balance
+      description: Returns the total available token balance across all properties. Public endpoint.
+      tags: [Market Data]
+      security: []
+      responses:
+        '200':
+          description: Token balance stats
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: object
+                    properties:
+                      totalBalance:
+                        type: number
+                      totalBalanceFormatted:
+                        type: string
+                      propertiesCount:
+                        type: integer
+
   /api/buyout/active-offers/{propertyId}:
     get:
       summary: Active Buyout Offers
@@ -461,6 +492,24 @@ paths:
       responses:
         '200':
           description: Orders list
+
+  /api/trading/orders/buy:
+    get:
+      summary: List Buy Orders
+      description: Returns all buy orders. Equivalent to GET /api/trading/orders?type=buy
+      tags: [Orders]
+      responses:
+        '200':
+          description: Buy orders list
+
+  /api/trading/orders/sell:
+    get:
+      summary: List Sell Orders
+      description: Returns all sell orders. Equivalent to GET /api/trading/orders?type=sell
+      tags: [Orders]
+      responses:
+        '200':
+          description: Sell orders list
 
   /api/order-book/my-orders:
     get:
@@ -642,7 +691,7 @@ paths:
   /api/distributions/record-claim:
     post:
       summary: Record Claim
-      description: Record a successful on-chain claim
+      description: Record a successful on-chain distribution claim. Call this after your bot completes a claim transaction on-chain to update the backend records.
       tags: [Distributions]
       requestBody:
         required: true
@@ -650,18 +699,48 @@ paths:
           application/json:
             schema:
               type: object
+              required: [epoch, index, walletAddress, txHash, propertyId]
               properties:
-                walletAddress:
-                  type: string
                 epoch:
                   type: integer
+                  description: Distribution epoch number
+                index:
+                  type: integer
+                  description: Claim index within the epoch
+                walletAddress:
+                  type: string
+                  description: Wallet that completed the claim
                 txHash:
                   type: string
-                amount:
+                  description: On-chain transaction hash of the claim
+                propertyId:
                   type: string
+                  description: Property ID the claim is for
       responses:
         '200':
           description: Claim recorded
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  data:
+                    type: object
+                    properties:
+                      epoch:
+                        type: integer
+                      index:
+                        type: integer
+                      amount:
+                        type: string
+                      status:
+                        type: string
+                      txHash:
+                        type: string
 
   /api/buyout/check-approval/{propertyId}:
     get:
@@ -709,11 +788,66 @@ paths:
         '200':
           description: Token balance and ownership percentage
 
+  /api/buyout/premium-vote-status/{propertyId}:
+    get:
+      summary: Premium Vote Status
+      description: Get the current premium vote status for a buyout, including vote count, premium percentage, and expiration. Public endpoint.
+      tags: [Buyouts]
+      security: []
+      parameters:
+        - name: propertyId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Premium vote status
+
+  /api/buyout/voter-status/{propertyId}/{walletAddress}:
+    get:
+      summary: Voter Status
+      description: Check whether a specific wallet has voted on a buyout premium proposal. Public endpoint.
+      tags: [Buyouts]
+      security: []
+      parameters:
+        - name: propertyId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: walletAddress
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Voter status and voting details
+
+  /api/buyout/property-financials/{propertyId}:
+    get:
+      summary: Property Financials
+      description: Returns financial metrics for a property related to buyout offers (token supply, current price, market cap). Public endpoint.
+      tags: [Buyouts]
+      security: []
+      parameters:
+        - name: propertyId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Property financial summary
+
   /api/api-keys:
     get:
       summary: List API Keys
       description: List all your API keys (requires JWT web session, not API key)
       tags: [Key Management]
+      security:
+        - JwtAuth: []
       responses:
         '200':
           description: API keys list
@@ -721,6 +855,8 @@ paths:
       summary: Create API Key
       description: Create a new API key (requires JWT web session). Returns secret ONCE.
       tags: [Key Management]
+      security:
+        - JwtAuth: []
       requestBody:
         required: true
         content:
@@ -777,6 +913,8 @@ paths:
     delete:
       summary: Revoke API Key
       tags: [Key Management]
+      security:
+        - JwtAuth: []
       parameters:
         - name: keyId
           in: path
@@ -790,6 +928,8 @@ paths:
       summary: Update API Key
       description: Update label or IP restrictions
       tags: [Key Management]
+      security:
+        - JwtAuth: []
       parameters:
         - name: keyId
           in: path

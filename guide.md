@@ -1,6 +1,6 @@
 # SecondaryDAO Trader API Documentation
 
-**Version:** 1.0
+**Version:** 1.1.0
 **Base URL:** `https://api.secondarydao.com` (production) | `http://localhost:5000` (development)
 
 This document covers everything a trader needs to build applications that interact with SecondaryDAO programmatically: creating API keys, authentication, available endpoints, rate limits, and code examples.
@@ -320,7 +320,7 @@ GET /api/token-stats/total-balance
 #### Get Merkle Proof
 
 ```
-GET /api/merkle/proof/:walletAddress
+GET /api/merkle/proof/:address
 ```
 
 Returns the merkle proof needed for on-chain token purchases.
@@ -553,7 +553,12 @@ The `signature` field requires an EIP-712 typed data signature. Your bot signs t
 const { ethers } = require('ethers');
 const crypto = require('crypto');
 
-// Your bot's wallet (private key stored securely, e.g., env var)
+// Set these in your environment or .env file
+const RPC_URL = process.env.RPC_URL;         // e.g., https://mainnet.infura.io/v3/YOUR_KEY
+const API_KEY_ID = process.env.SD_KEY_ID;
+const API_SECRET = process.env.SD_SECRET;
+
+// Your bot's wallet (private key stored securely as env var)
 const provider = new ethers.JsonRpcProvider(RPC_URL);
 const wallet = new ethers.Wallet(process.env.PRIVATE_KEY, provider);
 
@@ -609,8 +614,6 @@ const rawSignature = await wallet.signTypedData(domain, types, value);
 const { v, r, s } = ethers.Signature.from(rawSignature);
 
 // Build the API request body and HMAC-sign it (body included in signature)
-const API_KEY_ID = process.env.SD_KEY_ID;
-const API_SECRET = process.env.SD_SECRET;
 const path = '/api/token-purchase/gasless';
 
 const requestBody = JSON.stringify({
@@ -643,8 +646,12 @@ const response = await fetch(`https://api.secondarydao.com${path}`, {
 **Python (web3.py):**
 ```python
 from web3 import Web3
-from eth_account.messages import encode_typed_data
 import json, requests, time, hmac, hashlib, os
+
+# Set these in your environment or .env file
+RPC_URL = os.environ['RPC_URL']           # e.g., https://mainnet.infura.io/v3/YOUR_KEY
+PRIVATE_KEY = os.environ['PRIVATE_KEY']   # Your wallet private key
+BASE_URL = os.environ.get('SD_BASE_URL', 'https://api.secondarydao.com')
 
 w3 = Web3(Web3.HTTPProvider(RPC_URL))
 account = w3.eth.account.from_key(PRIVATE_KEY)
@@ -780,9 +787,28 @@ GET /api/distributions/history/:walletAddress
 
 Returns past distribution payments received by the wallet.
 
+#### Record Claim
+
+```
+POST /api/distributions/record-claim
+```
+
+After completing a distribution claim transaction on-chain, call this endpoint to update the backend records.
+
+**Request body:**
+```json
+{
+  "epoch": 1,
+  "index": 0,
+  "walletAddress": "0xYourWallet",
+  "txHash": "0xabc123...",
+  "propertyId": "64abc123..."
+}
+```
+
 #### Future: Gasless Claims
 
-A gas-efficient claim-based distribution system (MerklePayoutDistributor) is built but not yet active. When enabled, it will allow bots to claim accrued earnings via EIP-712 signed gasless claims through the API. The endpoints (`/api/distributions/claim-data`, `/api/distributions/gasless-claim`, `/api/distributions/record-claim`) will be documented here once activated.
+A gas-efficient claim-based distribution system (MerklePayoutDistributor) is built but not yet active. When enabled, it will allow bots to claim accrued earnings via EIP-712 signed gasless claims through the API. The endpoints (`/api/distributions/claim-data`, `/api/distributions/gasless-claim`) will be documented here once activated.
 
 ---
 
@@ -813,6 +839,30 @@ GET /api/buyout/my-position/:propertyId
 ```
 
 Returns the authenticated user's token balance and ownership percentage for a property.
+
+#### Premium Vote Status
+
+```
+GET /api/buyout/premium-vote-status/:propertyId
+```
+
+Get the current premium vote status for a buyout, including vote count, premium percentage, and expiration. Public endpoint.
+
+#### Voter Status
+
+```
+GET /api/buyout/voter-status/:propertyId/:walletAddress
+```
+
+Check whether a specific wallet has voted on a buyout premium proposal. Public endpoint.
+
+#### Property Financials
+
+```
+GET /api/buyout/property-financials/:propertyId
+```
+
+Returns financial metrics for a property related to buyout offers (token supply, current price, market cap). Public endpoint.
 
 ---
 
