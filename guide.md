@@ -57,13 +57,29 @@ You will receive:
 
 ## 2. Authentication
 
-Every authenticated API request requires three headers:
+### HMAC Request Signing (Recommended)
+
+Every authenticated API request requires three headers and an HMAC-SHA256 signature. The secret **never** leaves your machine -- only the signature is sent over the wire.
 
 | Header | Value | Description |
 |--------|-------|-------------|
 | `X-SD-KEY` | `sd_live_a1b2c3d4e5f6` | Your API key ID |
-| `X-SD-SECRET` | `<96-char hex string>` | Your API secret |
+| `X-SD-SIGNATURE` | `<64-char hex HMAC>` | HMAC-SHA256 request signature |
 | `X-SD-TIMESTAMP` | `1709500000000` | Current Unix timestamp in milliseconds |
+
+**How to compute the signature:**
+
+```
+message  = timestamp + METHOD + path + body
+signature = HMAC-SHA256(secret, message)
+```
+
+Where:
+- `timestamp` = value of `X-SD-TIMESTAMP` (string, Unix ms)
+- `METHOD` = uppercase HTTP method (`GET`, `POST`, `DELETE`, etc.)
+- `path` = full request path including query string (e.g., `/api/portfolio/holdings?walletAddress=0x...`)
+- `body` = raw request body as a string (empty string `""` for GET requests)
+- `secret` = your 96-character hex API secret
 
 ### Timestamp Validation
 
@@ -72,12 +88,34 @@ The `X-SD-TIMESTAMP` must be within **30 seconds** of the server's time. If your
 ### Example Request
 
 ```bash
-curl -X GET "https://api.secondarydao.com/api/portfolio/holdings?walletAddress=0xYourWallet" \
-  -H "X-SD-KEY: sd_live_a1b2c3d4e5f6" \
-  -H "X-SD-SECRET: your96charhexsecrethere..." \
-  -H "X-SD-TIMESTAMP: $(date +%s000)" \
+# Variables
+KEY_ID="sd_live_a1b2c3d4e5f6"
+SECRET="your96charhexsecrethere..."
+TIMESTAMP=$(date +%s000)
+METHOD="GET"
+PATH="/api/portfolio/holdings?walletAddress=0xYourWallet"
+BODY=""
+
+# Compute HMAC signature
+MESSAGE="${TIMESTAMP}${METHOD}${PATH}${BODY}"
+SIGNATURE=$(echo -n "$MESSAGE" | openssl dgst -sha256 -hmac "$SECRET" | awk '{print $2}')
+
+curl -X GET "https://api.secondarydao.com${PATH}" \
+  -H "X-SD-KEY: ${KEY_ID}" \
+  -H "X-SD-SIGNATURE: ${SIGNATURE}" \
+  -H "X-SD-TIMESTAMP: ${TIMESTAMP}" \
   -H "Content-Type: application/json"
 ```
+
+### Legacy Authentication (Deprecated)
+
+Sending the raw secret via `X-SD-SECRET` header is still supported but **deprecated**. Requests using this method will receive an `X-SD-Deprecation` response header. Migrate to HMAC signing as soon as possible.
+
+| Header | Value | Description |
+|--------|-------|-------------|
+| `X-SD-KEY` | `sd_live_a1b2c3d4e5f6` | Your API key ID |
+| `X-SD-SECRET` | `<96-char hex string>` | Your API secret (deprecated) |
+| `X-SD-TIMESTAMP` | `1709500000000` | Current Unix timestamp in milliseconds |
 
 ---
 
@@ -635,6 +673,9 @@ Update label or IP whitelist. Scopes cannot be changed after creation.
 ```python
 import requests
 import time
+import hmac
+import hashlib
+import json
 
 class SecondaryDAOClient:
     def __init__(self, base_url, key_id, secret):
@@ -642,11 +683,19 @@ class SecondaryDAOClient:
         self.key_id = key_id
         self.secret = secret
 
-    def _headers(self):
+    def _sign(self, method, path, body=''):
+        """Compute HMAC-SHA256 request signature"""
+        timestamp = str(int(time.time() * 1000))
+        message = timestamp + method.upper() + path + body
+        signature = hmac.new(
+            self.secret.encode(),
+            message.encode(),
+            hashlib.sha256
+        ).hexdigest()
         return {
             'X-SD-KEY': self.key_id,
-            'X-SD-SECRET': self.secret,
-            'X-SD-TIMESTAMP': str(int(time.time() * 1000)),
+            'X-SD-SIGNATURE': signature,
+            'X-SD-TIMESTAMP': timestamp,
             'Content-Type': 'application/json'
         }
 
@@ -658,10 +707,10 @@ class SecondaryDAOClient:
 
     def get_holdings(self, wallet_address):
         """Get token holdings for a wallet"""
+        path = f'/api/portfolio/holdings?walletAddress={wallet_address}'
         r = requests.get(
-            f'{self.base_url}/api/portfolio/holdings',
-            params={'walletAddress': wallet_address},
-            headers=self._headers()
+            f'{self.base_url}{path}',
+            headers=self._sign('GET', path)
         )
         r.raise_for_status()
         return r.json()
@@ -677,15 +726,16 @@ class SecondaryDAOClient:
 
     def get_my_orders(self, status=None, property_id=None):
         """Get your open orders"""
-        params = {}
+        params = []
         if status:
-            params['status'] = status
+            params.append(f'status={status}')
         if property_id:
-            params['propertyId'] = property_id
+            params.append(f'propertyId={property_id}')
+        qs = '?' + '&'.join(params) if params else ''
+        path = f'/api/order-book/my-orders{qs}'
         r = requests.get(
-            f'{self.base_url}/api/order-book/my-orders',
-            params=params,
-            headers=self._headers()
+            f'{self.base_url}{path}',
+            headers=self._sign('GET', path)
         )
         r.raise_for_status()
         return r.json()
@@ -695,29 +745,31 @@ class SecondaryDAOClient:
                      execution_type='limit', time_in_force='GTC',
                      expiration_hours=168):
         """Create a buy or sell order"""
-        body = {
+        body = json.dumps({
             'propertyId': property_id,
-            'orderType': order_type,  # 'buy' or 'sell'
-            'executionType': execution_type,  # 'limit' or 'market'
+            'orderType': order_type,
+            'executionType': execution_type,
             'tokenAmount': token_amount,
             'pricePerToken': price_per_token,
             'walletAddress': wallet_address,
             'timeInForce': time_in_force,
             'expirationHours': expiration_hours
-        }
+        })
+        path = '/api/order-book/create'
         r = requests.post(
-            f'{self.base_url}/api/order-book/create',
-            json=body,
-            headers=self._headers()
+            f'{self.base_url}{path}',
+            data=body,
+            headers=self._sign('POST', path, body)
         )
         r.raise_for_status()
         return r.json()
 
     def get_unclaimed_distributions(self, wallet_address):
         """Check unclaimed distribution earnings"""
+        path = f'/api/distributions/unclaimed/{wallet_address}'
         r = requests.get(
-            f'{self.base_url}/api/distributions/unclaimed/{wallet_address}',
-            headers=self._headers()
+            f'{self.base_url}{path}',
+            headers=self._sign('GET', path)
         )
         r.raise_for_status()
         return r.json()
@@ -744,13 +796,13 @@ for prop in properties.get('properties', []):
     print(f"{prop['name']}: ${prop['tokenPrice']}/token, "
           f"status={prop['status']}")
 
-# Check holdings
+# Check holdings (HMAC-signed)
 holdings = client.get_holdings('0xYourWalletAddress')
 for h in holdings.get('holdings', []):
     print(f"{h['propertyName']}: {h['tokenAmount']} tokens "
           f"(${h['usdValue']})")
 
-# Place a limit buy order
+# Place a limit buy order (HMAC-signed)
 order = client.create_order(
     property_id='64abc123...',
     order_type='buy',
@@ -767,6 +819,7 @@ print(f"Order created: {order['order']['orderId']}")
 
 ```javascript
 const axios = require('axios');
+const crypto = require('crypto');
 
 class SecondaryDAOClient {
   constructor(baseUrl, keyId, secret) {
@@ -775,11 +828,21 @@ class SecondaryDAOClient {
     this.secret = secret;
   }
 
-  _headers() {
+  /**
+   * Compute HMAC-SHA256 signature for a request.
+   * message = timestamp + METHOD + path + body
+   */
+  _sign(method, path, body = '') {
+    const timestamp = String(Date.now());
+    const message = timestamp + method.toUpperCase() + path + body;
+    const signature = crypto
+      .createHmac('sha256', this.secret)
+      .update(message)
+      .digest('hex');
     return {
       'X-SD-KEY': this.keyId,
-      'X-SD-SECRET': this.secret,
-      'X-SD-TIMESTAMP': String(Date.now()),
+      'X-SD-SIGNATURE': signature,
+      'X-SD-TIMESTAMP': timestamp,
       'Content-Type': 'application/json'
     };
   }
@@ -790,9 +853,10 @@ class SecondaryDAOClient {
   }
 
   async getHoldings(walletAddress) {
+    const path = `/api/portfolio/holdings?walletAddress=${walletAddress}`;
     const { data } = await axios.get(
-      `${this.baseUrl}/api/portfolio/holdings`,
-      { params: { walletAddress }, headers: this._headers() }
+      `${this.baseUrl}${path}`,
+      { headers: this._sign('GET', path) }
     );
     return data;
   }
@@ -806,9 +870,11 @@ class SecondaryDAOClient {
   }
 
   async getMyOrders(params = {}) {
+    const qs = new URLSearchParams(params).toString();
+    const path = `/api/order-book/my-orders${qs ? '?' + qs : ''}`;
     const { data } = await axios.get(
-      `${this.baseUrl}/api/order-book/my-orders`,
-      { params, headers: this._headers() }
+      `${this.baseUrl}${path}`,
+      { headers: this._sign('GET', path) }
     );
     return data;
   }
@@ -816,22 +882,25 @@ class SecondaryDAOClient {
   async createOrder({ propertyId, orderType, tokenAmount, pricePerToken,
                       walletAddress, executionType = 'limit',
                       timeInForce = 'GTC', expirationHours = 168 }) {
+    const path = '/api/order-book/create';
+    const body = JSON.stringify({
+      propertyId, orderType, executionType,
+      tokenAmount, pricePerToken, walletAddress,
+      timeInForce, expirationHours
+    });
     const { data } = await axios.post(
-      `${this.baseUrl}/api/order-book/create`,
-      {
-        propertyId, orderType, executionType,
-        tokenAmount, pricePerToken, walletAddress,
-        timeInForce, expirationHours
-      },
-      { headers: this._headers() }
+      `${this.baseUrl}${path}`,
+      body,
+      { headers: this._sign('POST', path, body) }
     );
     return data;
   }
 
   async getUnclaimedDistributions(walletAddress) {
+    const path = `/api/distributions/unclaimed/${walletAddress}`;
     const { data } = await axios.get(
-      `${this.baseUrl}/api/distributions/unclaimed/${walletAddress}`,
-      { headers: this._headers() }
+      `${this.baseUrl}${path}`,
+      { headers: this._sign('GET', path) }
     );
     return data;
   }
@@ -852,19 +921,19 @@ const client = new SecondaryDAOClient(
 );
 
 (async () => {
-  // Browse properties
+  // Browse properties (no auth needed)
   const { properties } = await client.getProperties();
   properties.forEach(p =>
     console.log(`${p.name}: $${p.tokenPrice}/token, status=${p.status}`)
   );
 
-  // Check holdings
+  // Check holdings (HMAC-signed)
   const { holdings } = await client.getHoldings('0xYourWallet');
   holdings.forEach(h =>
     console.log(`${h.propertyName}: ${h.tokenAmount} tokens ($${h.usdValue})`)
   );
 
-  // Place a limit buy order
+  // Place a limit buy order (HMAC-signed)
   const order = await client.createOrder({
     propertyId: '64abc123...',
     orderType: 'buy',
@@ -880,21 +949,23 @@ const client = new SecondaryDAOClient(
 
 ## 8. Security Best Practices
 
-1. **Never share your API secret.** Treat it like a password. If compromised, revoke the key immediately.
+1. **Use HMAC signing.** Always use `X-SD-SIGNATURE` (HMAC) instead of `X-SD-SECRET` (legacy). HMAC ensures your secret never leaves your machine and protects against request body tampering.
 
-2. **Use IP whitelisting.** If your bot runs from a fixed server, whitelist that IP address when creating the key.
+2. **Never share your API secret.** Treat it like a password. If compromised, revoke the key immediately.
 
-3. **Use minimum required scopes.** A portfolio tracker only needs `portfolio:read`. A trading bot needs `orders:read` + `orders:write`. Don't grant `trading:execute` unless you need gasless purchases.
+3. **Use IP whitelisting.** If your bot runs from a fixed server, whitelist that IP address when creating the key.
 
-4. **Set key expiration.** Consider setting `expiresIn` when creating keys, especially for development/testing keys.
+4. **Use minimum required scopes.** A portfolio tracker only needs `portfolio:read`. A trading bot needs `orders:read` + `orders:write`. Don't grant `trading:execute` unless you need gasless purchases.
 
-5. **Store secrets in environment variables.** Never hardcode secrets in source code.
+5. **Set key expiration.** Consider setting `expiresIn` when creating keys, especially for development/testing keys.
 
-6. **Monitor usage.** Use `GET /api/api-keys` to check `lastUsedAt` and `totalRequests` for each key.
+6. **Store secrets in environment variables.** Never hardcode secrets in source code.
 
-7. **Rotate keys periodically.** Create a new key, update your bot, then revoke the old key.
+7. **Monitor usage.** Use `GET /api/api-keys` to check `lastUsedAt` and `totalRequests` for each key.
 
-8. **Auto-revocation triggers.** Your API keys will be automatically revoked if:
+8. **Rotate keys periodically.** Create a new key, update your bot, then revoke the old key.
+
+9. **Auto-revocation triggers.** Your API keys will be automatically revoked if:
    - You change your password
    - Your AML status changes to 'failed'
    - Your account is suspended
@@ -916,7 +987,15 @@ The platform uses WebSocket connections for real-time updates. WebSocket access 
 
 ## Appendix: Quick Reference
 
-### Authentication Headers
+### Authentication Headers (HMAC -- Recommended)
+
+```
+X-SD-KEY: sd_live_<your_key_id>
+X-SD-SIGNATURE: HMAC-SHA256(secret, timestamp + METHOD + path + body)
+X-SD-TIMESTAMP: <unix_milliseconds>
+```
+
+### Authentication Headers (Legacy -- Deprecated)
 
 ```
 X-SD-KEY: sd_live_<your_key_id>

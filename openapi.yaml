@@ -4,14 +4,18 @@ info:
   description: |
     Programmatic access to real estate token trading, portfolio data, distributions, and market information.
 
-    ## Authentication
+    ## Authentication (HMAC Signing)
     Send three headers with every authenticated request:
     - `X-SD-KEY` — Your API key ID
-    - `X-SD-SECRET` — Your API secret
+    - `X-SD-SIGNATURE` — HMAC-SHA256 signature: `HMAC(secret, timestamp + METHOD + path + body)`
     - `X-SD-TIMESTAMP` — Unix milliseconds (within 30s of server time)
 
+    The secret never leaves your machine. Only the computed signature is sent.
+
+    **Legacy:** Sending the raw secret via `X-SD-SECRET` is deprecated. Migrate to HMAC signing.
+
     Create API keys from your SecondaryDAO account at Profile > API Keys.
-  version: '1.0.0'
+  version: '1.1.0'
   contact:
     name: SecondaryDAO
     url: https://secondarydao.com
@@ -29,11 +33,16 @@ components:
       in: header
       name: X-SD-KEY
       description: API key ID (e.g., sd_live_a1b2c3d4e5f6)
+    ApiSignatureAuth:
+      type: apiKey
+      in: header
+      name: X-SD-SIGNATURE
+      description: "HMAC-SHA256 signature: HMAC(secret, timestamp + METHOD + path + body)"
     ApiSecretAuth:
       type: apiKey
       in: header
       name: X-SD-SECRET
-      description: API secret (96-char hex string)
+      description: "API secret (96-char hex string) — DEPRECATED, use X-SD-SIGNATURE instead"
     ApiTimestamp:
       type: apiKey
       in: header
@@ -184,7 +193,7 @@ components:
 
 security:
   - ApiKeyAuth: []
-    ApiSecretAuth: []
+    ApiSignatureAuth: []
     ApiTimestamp: []
 
 paths:
