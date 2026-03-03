@@ -520,7 +520,28 @@ paths:
   /api/token-purchase/gasless:
     post:
       summary: Gasless Token Purchase
-      description: Purchase tokens using ERC-2612 permit (platform pays gas). Max 10/day.
+      description: |
+        Purchase tokens during an Initial Property Sale using ERC-2612 permit signatures.
+        The platform relays the transaction and pays gas. Limited to 10 per day per wallet.
+
+        The `signature` is an EIP-712 typed data signature (ERC-2612 permit) that authorizes
+        the PropertySaleEscrow contract to spend the buyer's stablecoins. The bot signs this
+        locally with its private key -- the key never leaves the client machine.
+
+        **EIP-712 domain for the permit:**
+        - `name`: The stablecoin's `name()` (e.g., "USD Coin" for USDC)
+        - `version`: "1"
+        - `chainId`: The network chain ID
+        - `verifyingContract`: The stablecoin contract address (USDC or USDT)
+
+        **Permit message fields:**
+        - `owner`: The buyer's wallet address
+        - `spender`: The PropertySaleEscrow contract address (from `GET /api/explorer/properties`)
+        - `value`: Amount in stablecoin units (6 decimals)
+        - `nonce`: From `stablecoin.nonces(buyerAddress)` on-chain
+        - `deadline`: Unix timestamp (seconds) when the permit expires
+
+        See the guide for full JavaScript and Python code examples.
       tags: [Trading]
       requestBody:
         required: true
@@ -532,30 +553,59 @@ paths:
               properties:
                 propertyId:
                   type: string
+                  description: MongoDB ID of the property
                 amount:
                   type: string
-                  description: Amount in stablecoin units (6 decimals)
+                  description: Amount in stablecoin units (6 decimals, e.g., "100000000" = 100 USDC)
+                  example: "100000000"
                 isUSDT:
                   type: boolean
                   description: false for USDC, true for USDT
+                  default: false
                 buyerAddress:
                   type: string
+                  description: Buyer's wallet address (must match permit owner)
+                  example: "0xYourWalletAddress"
                 signature:
                   type: object
+                  required: [v, r, s, deadline]
+                  description: ERC-2612 permit signature components signed with EIP-712 typed data
                   properties:
                     v:
                       type: integer
+                      description: Recovery identifier (27 or 28)
+                      example: 28
                     r:
                       type: string
+                      description: ECDSA signature r component (32-byte hex)
+                      example: "0xa1b2c3..."
                     s:
                       type: string
+                      description: ECDSA signature s component (32-byte hex)
+                      example: "0xd4e5f6..."
                     deadline:
                       type: integer
+                      description: Unix timestamp (seconds) when permit expires
+                      example: 1709500000
       responses:
         '200':
-          description: Purchase relayed
+          description: Purchase relayed successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  txHash:
+                    type: string
+                    description: On-chain transaction hash
+        '400':
+          description: Invalid signature, amount, or property not in IPS
+        '403':
+          description: Wallet not whitelisted or KYC/AML issue
         '429':
-          description: Daily limit reached
+          description: Daily gasless limit reached (10 per wallet per day)
 
   /api/distributions/unclaimed/{walletAddress}:
     get:
