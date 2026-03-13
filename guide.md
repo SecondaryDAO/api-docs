@@ -343,6 +343,76 @@ GET /api/buyout/active-offers/:propertyId
 
 Returns active buyout offers for a property.
 
+#### Token List (Uniswap Standard)
+
+```
+GET /api/tokenlist.json
+```
+
+Returns all active property tokens in [Uniswap Token List](https://tokenlists.org/) format. Wallets like Rabby, MetaMask, and aggregators like CoinGecko can consume this feed to auto-discover SecondaryDAO property tokens with correct names, symbols, and icons.
+
+**Response:**
+```json
+{
+  "name": "SecondaryDAO Property Tokens",
+  "timestamp": "2025-01-15T12:00:00.000Z",
+  "version": { "major": 1, "minor": 0, "patch": 2 },
+  "keywords": ["secondarydao", "real-estate", "rwa", "property"],
+  "tokens": [
+    {
+      "chainId": 42161,
+      "address": "0xAbC123...def456",
+      "name": "Sunset Ridge Apartments",
+      "symbol": "SDSRAX",
+      "decimals": 18,
+      "logoURI": "https://api.secondarydao.com/api/token-logos/0xabc123...def456.png",
+      "tags": ["property-token", "rwa"],
+      "extensions": {
+        "logoURI-512": "...?size=512",
+        "logoURI-256": "...?size=256",
+        "logoURI-64": "...?size=64",
+        "propertyType": "apartment"
+      }
+    }
+  ]
+}
+```
+
+> **Wallet integration:** Add `https://api.secondarydao.com/api/tokenlist.json` as a custom token list in Rabby (Settings > Custom Token List) to auto-resolve all SecondaryDAO property token icons.
+
+#### Token Logo Proxy
+
+```
+GET /api/token-logos/:contractAddress.png
+GET /api/token-logos/:contractAddress.png?size=64
+```
+
+Serves token logos by contract address. Returns a PNG image proxied through the API domain so it works in wallets and browsers with third-party tracking prevention enabled.
+
+**Query parameters:**
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `size` | integer | `256` | Image dimensions. Valid: `512`, `256`, `200`, `64` |
+
+**Response:** Binary PNG image with `Cache-Control: public, max-age=86400` and `Access-Control-Allow-Origin: *`.
+
+**Usage in `wallet_watchAsset`:**
+```javascript
+await window.ethereum.request({
+  method: 'wallet_watchAsset',
+  params: {
+    type: 'ERC20',
+    options: {
+      address: '0xAbC123...def456',
+      symbol: 'SDSRAX',
+      decimals: 18,
+      image: 'https://api.secondarydao.com/api/token-logos/0xabc123...def456.png'
+    }
+  }
+});
+```
+
 ---
 
 ### 5.2 Portfolio
@@ -1388,6 +1458,8 @@ X-SD-TIMESTAMP: <unix_milliseconds>
 - `GET /api/buyout/voter-status/:propertyId/:walletAddress`
 - `GET /api/buyout/property-financials/:propertyId`
 - `GET /api/order-book/book/:propertyId`
+- `GET /api/tokenlist.json`
+- `GET /api/token-logos/:address.png`
 
 **Authenticated (API key required):**
 - `GET /api/portfolio/summary` - `portfolio:read`
