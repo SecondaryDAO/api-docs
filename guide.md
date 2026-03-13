@@ -131,16 +131,6 @@ curl -X GET "https://api.secondarydao.com${PATH}" \
   -H "Content-Type: application/json"
 ```
 
-### Legacy Authentication (Deprecated)
-
-Sending the raw secret via `X-SD-SECRET` header is still supported but **deprecated**. Requests using this method will receive an `X-SD-Deprecation` response header. Migrate to HMAC signing as soon as possible.
-
-| Header | Value | Description |
-|--------|-------|-------------|
-| `X-SD-KEY` | `sd_live_a1b2c3d4e5f6` | Your API key ID |
-| `X-SD-SECRET` | `<96-char hex string>` | Your API secret (deprecated) |
-| `X-SD-TIMESTAMP` | `1709500000000` | Current Unix timestamp in milliseconds |
-
 ---
 
 ## 3. How Trading Works
@@ -1362,7 +1352,7 @@ const client = new SecondaryDAOClient(
 
 Your API key is your trading authority. Anyone with a valid `orders:write` key can place trades against the associated wallet. Treat keys like exchange API credentials.
 
-1. **Use HMAC signing.** Always use `X-SD-SIGNATURE` (HMAC) instead of `X-SD-SECRET` (legacy). HMAC ensures your secret never leaves your machine and protects against request body tampering.
+1. **Use HMAC signing.** Always use `X-SD-SIGNATURE` (HMAC). HMAC ensures your secret never leaves your machine and protects against request body tampering.
 
 2. **Never share your API secret.** Treat it like a private key. If compromised, revoke immediately.
 
@@ -1420,14 +1410,6 @@ The platform uses WebSocket connections for real-time updates. WebSocket access 
 ```
 X-SD-KEY: sd_live_<your_key_id>
 X-SD-SIGNATURE: HMAC-SHA256(secret, timestamp + METHOD + path + body)
-X-SD-TIMESTAMP: <unix_milliseconds>
-```
-
-### Authentication Headers (Legacy -- Deprecated)
-
-```
-X-SD-KEY: sd_live_<your_key_id>
-X-SD-SECRET: <your_96_char_secret>
 X-SD-TIMESTAMP: <unix_milliseconds>
 ```
 
