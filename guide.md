@@ -379,6 +379,12 @@ GET /api/token-logos/:contractAddress.png?size=64
 
 Serves token logos by contract address. Returns a PNG image proxied through the API domain so it works in wallets and browsers with third-party tracking prevention enabled.
 
+**Path parameter:**
+
+| Parameter | Format | Description |
+|-----------|--------|-------------|
+| `contractAddress` | `/^0x[a-fA-F0-9]{40}$/` | EVM address of the property token. Input is strictly validated — any non-conforming value returns `400 Invalid contract address`. |
+
 **Query parameters:**
 
 | Parameter | Type | Default | Description |
@@ -386,6 +392,20 @@ Serves token logos by contract address. Returns a PNG image proxied through the 
 | `size` | integer | `256` | Image dimensions. Valid: `512`, `256`, `200`, `64` |
 
 **Response:** Binary PNG image with `Cache-Control: public, max-age=86400` and `Access-Control-Allow-Origin: *`.
+
+**Status codes:**
+
+| Code | Meaning |
+|------|---------|
+| `200` | Logo returned |
+| `400` | Invalid contract address format |
+| `404` | Unknown token or upstream logo missing |
+| `502` | Upstream source rejected (off allowlist), oversized, or unreachable |
+| `500` | Unexpected server error |
+
+**Upstream & limits:** the proxy only fetches from an internal allowlist of HTTPS hosts (`res.cloudinary.com`, `app.secondarydao.com`). Responses above **2 MB** or upstreams slower than **5 s** are aborted. This is a hardened public endpoint — do not assume arbitrary image URLs can be proxied through it.
+
+**Security:** this endpoint was hardened under the **"Perret" security patch** (2026-04-10) after responsible disclosure by Ben Perret ([ben@anyiplabs.com](mailto:ben@anyiplabs.com)) closed a regex-injection and SSRF surface. If you spot anything similar, email [security@secondarydao.com](mailto:security@secondarydao.com).
 
 **Usage in `wallet_watchAsset`:**
 ```javascript
